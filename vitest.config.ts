@@ -6,7 +6,7 @@ export default defineConfig({
       provider: 'v8',
       // src/components mide 0%: entra cuando tenga tests de widget.
       include: ['src/lib/**', 'src/context/**'],
-      reporter: ['text', 'text-summary'],
+      reporter: ['text', 'text-summary', 'lcov'],
       thresholds: {
         // A ras de lo medido, para que la cobertura solo pueda subir.
         statements: 70,
