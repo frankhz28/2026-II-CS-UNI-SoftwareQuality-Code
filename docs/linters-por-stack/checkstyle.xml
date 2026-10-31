@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!--
+  Java/Spring Boot - Checkstyle. Referencia del Modulo 6; no se usa en este repo.
+  En un proyecto Java real este archivo va en la raiz, como `checkstyle.xml`.
+
+  Salida esperada:
+    $ mvn checkstyle:check
+    [WARN] Validador.java:14: Cyclomatic Complexity is 13 (max allowed is 12).
+
+    $ mvn pmd:check
+    PMD: Avoid unused private fields such as 'servicioFiltradas'.
+
+    $ mvn spotbugs:check
+    NP: Possible null pointer dereference in Validador.esValida(String)
+
+  Java reparte el trabajo entre tres herramientas con roles distintos:
+    - Checkstyle vigila estilo y convenciones.
+    - PMD detecta code smells de diseno.
+    - SpotBugs analiza el BYTECODE ya compilado en busca de patrones de bugs
+      reales. Es el unico de los cuatro stacks que necesita un build previo
+      antes de poder analizar nada.
+-->
+<module name="Checker">
+  <module name="TreeWalker">
+    <module name="CyclomaticComplexity">
+      <property name="max" value="12"/>
+    </module>
+    <module name="UnusedImports"/>
+  </module>
+</module>

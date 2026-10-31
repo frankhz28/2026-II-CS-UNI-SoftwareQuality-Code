@@ -1,0 +1,20 @@
+# C++ — clang-tidy. Referencia del Módulo 6; no se usa en este repo.
+# En un proyecto C++ real este archivo va en la raíz, como `.clang-tidy`.
+
+Checks: >
+  bugprone-*,
+  performance-*,
+  modernize-use-nullptr,
+  cppcoreguidelines-pro-type-member-init
+
+# Salida esperada:
+#   $ clang-tidy validador.cpp -- -std=c++17
+#   warning: variable 'resultado' is used uninitialized whenever 'if'
+#       condition is false [clang-analyzer-core.uninitialized.Assign]
+#
+#   $ cppcheck --enable=warning,performance validador.cpp
+#   (warning) Possible null pointer dereference: ptr
+#
+# Estas dos herramientas atrapan una clase de bug que no existe en Python,
+# Dart, Java ni TypeScript: memoria liberada dos veces, uso de memoria no
+# inicializada, punteros que apuntan a algo que ya no existe.
