@@ -1,0 +1,21 @@
+# Flutter/Dart — dart analyze + very_good_analysis.
+# Referencia del Módulo 6; no se usa en este repo.
+# En un proyecto Flutter real este archivo va en la raíz, con este mismo nombre.
+
+include: package:very_good_analysis/analysis_options.yaml
+
+linter:
+  rules:
+    public_member_api_docs: false   # se puede afinar por proyecto
+
+# Salida esperada:
+#   $ flutter analyze
+#   warning - lib/validador.dart:8:7 - The value of the local variable 'tmp'
+#     is not used - unused_local_variable
+#   info - lib/carrito.dart:22:1 - Missing documentation for a public member
+#     - public_member_api_docs
+#
+# `very_good_analysis` es intencionalmente mas estricto que lo minimo
+# necesario para compilar: el objetivo es atrapar en el analizador lo que en
+# un equipo grande terminaria siendo el mismo comentario de code review
+# repetido uno por uno.

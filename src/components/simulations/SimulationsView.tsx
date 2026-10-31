@@ -8,7 +8,6 @@ import {
   Server,
   Radio,
   HardDrive,
-  Database,
   ArrowRight,
   ArrowLeft,
   AlertTriangle,
@@ -80,8 +79,6 @@ export function SimulationsView() {
   const {
     scenarioName,
     components,
-    datasets,
-    backups,
     runSimulation,
     isSimulating,
   } = useSimulation()

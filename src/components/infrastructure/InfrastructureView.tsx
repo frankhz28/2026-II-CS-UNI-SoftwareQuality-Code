@@ -13,12 +13,8 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
   X,
   Layers,
-  ArrowRight,
   Flame,
 } from 'lucide-react'
 import { useSimulation } from '../../context/SimulationContext'

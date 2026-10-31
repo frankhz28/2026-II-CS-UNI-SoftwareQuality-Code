@@ -4,21 +4,20 @@ export default defineConfig({
   test: {
     coverage: {
       provider: 'v8',
-      // Las vistas quedan fuera: de ellas se encarga la prueba de humo del pipeline
+      // src/components mide 0%: entra cuando tenga tests de widget.
       include: ['src/lib/**', 'src/context/**'],
-      reporter: ['text', 'text-summary'],
+      reporter: ['text', 'text-summary', 'lcov'],
       thresholds: {
-        // Piso un poco por debajo de lo que hay hoy, para que la cobertura no baje
-        statements: 65,
+        // A ras de lo medido, para que la cobertura solo pueda subir.
+        statements: 70,
         branches: 80,
-        functions: 60,
-        lines: 65,
-        // El motor exige 80%, como el --fail-under=80 del material del curso
+        functions: 73,
+        lines: 72,
         'src/lib/**': {
-          statements: 80,
-          branches: 80,
-          functions: 80,
-          lines: 80,
+          statements: 95,
+          branches: 95,
+          functions: 95,
+          lines: 95,
         },
       },
     },

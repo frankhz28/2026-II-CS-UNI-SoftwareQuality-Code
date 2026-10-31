@@ -8,14 +8,10 @@ import {
   Filter,
   Plus,
   Trash2,
-  Clock,
-  ShieldCheck,
-  AlertTriangle,
   X,
   Building2,
 } from 'lucide-react'
 import { useSimulation } from '../../context/SimulationContext'
-import { Dataset, BackupCopy } from '../../types/resilient'
 
 export function DataBackupsView() {
   const { datasets, backups, addDataset, addBackup, deleteBackup, components } =
@@ -30,7 +26,7 @@ export function DataBackupsView() {
 
   // Formulario de nuevo dataset
   const [dsName, setDsName] = useState('')
-  const [dsServiceId, setDsServiceId] = useState('svc-portal')
+  const [dsServiceId] = useState('svc-portal')
   const [dsSize, setDsSize] = useState(350)
   const [dsCriticality, setDsCriticality] = useState<'Alta' | 'Media' | 'Baja'>('Alta')
   const [dsLocation, setDsLocation] = useState('Lima - Sede Central')
@@ -39,7 +35,7 @@ export function DataBackupsView() {
   const [bkDatasetId, setBkDatasetId] = useState('ds-1')
   const [bkLocation, setBkLocation] = useState('Arequipa - Sede Regional')
   const [bkStorageId, setBkStorageId] = useState('stor-nas-aqp')
-  const [bkSize, setBkSize] = useState(500)
+  const [bkSize] = useState(500)
   const [bkRto, setBkRto] = useState(45)
   const [bkRpo, setBkRpo] = useState(2)
 

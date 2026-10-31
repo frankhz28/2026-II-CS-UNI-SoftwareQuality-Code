@@ -8,7 +8,6 @@ import {
   Network,
   Clock,
   Database,
-  ShieldCheck,
   CheckCircle2,
   XCircle,
   ArrowRight,

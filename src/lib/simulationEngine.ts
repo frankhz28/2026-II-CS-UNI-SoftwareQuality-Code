@@ -10,21 +10,44 @@ import {
   RiskFinding,
 } from '../types/resilient'
 
-export function runDisasterSimulation(
-  components: InfraComponent[],
-  connections: Connection[],
-  datasets: Dataset[],
-  backups: BackupCopy[],
-  failureEvents: FailureEvent[],
-  scenarioName: string
-): SimulationResult {
-  const componentsAfter: InfraComponent[] = JSON.parse(JSON.stringify(components))
-  const connectionsAfter: Connection[] = JSON.parse(JSON.stringify(connections))
+// Reglas de negocio del escenario
+const PRIMARY_DATACENTER_ID = 'dc-lima'
+const INTERCONNECTION_LINK_ID = 'conn-inter-fo'
+const PRIMARY_REGION = 'Lima'
+// Pérdida estimada: horas de RPO x ~2.5 GB de transacciones por hora
+const ESTIMATED_GB_LOST_PER_RPO_HOUR = 2.5
+const FULL_RECOVERY_PERCENTAGE = 100
 
+interface FailedIds {
+  failedComponentIds: Set<string>
+  failedConnectionIds: Set<string>
+}
+
+interface DataRecoverySummary {
+  recoveryDetails: RecoveryItem[]
+  totalDataGb: number
+  recoverableDataGb: number
+  totalDataLossGb: number
+  maxRtoMinutes: number
+  maxRpoHours: number
+}
+
+interface ServiceStatusCounts {
+  servicesTotal: number
+  servicesAvailable: number
+  servicesDegraded: number
+  servicesDown: number
+}
+
+/** Copia profunda para no mutar el estado "antes" que el reporte compara. */
+function cloneInfrastructure<T>(items: T[]): T[] {
+  return JSON.parse(JSON.stringify(items)) as T[]
+}
+
+function collectExplicitFailures(failureEvents: FailureEvent[]): FailedIds {
   const failedComponentIds = new Set<string>()
   const failedConnectionIds = new Set<string>()
 
-  // Eventos de fallo explícitos
   failureEvents.forEach((event) => {
     if (event.type === 'link') {
       failedConnectionIds.add(event.targetId)
@@ -33,11 +56,18 @@ export function runDisasterSimulation(
     }
   })
 
-  // Si cae un centro de datos, caen todos los componentes que aloja
-  componentsAfter.forEach((comp) => {
+  return { failedComponentIds, failedConnectionIds }
+}
+
+/** Si cae un centro de datos, caen todos los componentes que aloja. */
+function propagateDatacenterFailures(
+  components: InfraComponent[],
+  failedComponentIds: Set<string>
+): void {
+  components.forEach((comp) => {
     if (comp.type === 'datacenter' && failedComponentIds.has(comp.id)) {
       comp.status = 'caido'
-      componentsAfter.forEach((child) => {
+      components.forEach((child) => {
         if (child.datacenterId === comp.id) {
           failedComponentIds.add(child.id)
           child.status = 'caido'
@@ -45,56 +75,98 @@ export function runDisasterSimulation(
       })
     }
   })
+}
 
-  componentsAfter.forEach((comp) => {
+function applyComponentStatuses(
+  components: InfraComponent[],
+  failedComponentIds: Set<string>
+): void {
+  components.forEach((comp) => {
     if (failedComponentIds.has(comp.id)) {
       comp.status = 'caido'
     }
   })
+}
 
-  // Un enlace afectado queda degradado si hay algún enlace redundante en pie; si no, cae
-  connectionsAfter.forEach((conn) => {
-    if (
-      failedConnectionIds.has(conn.id) ||
-      failedComponentIds.has(conn.fromId) ||
-      failedComponentIds.has(conn.toId)
-    ) {
-      const redundantConn = connectionsAfter.find(
-        (c) =>
-          c.id !== conn.id &&
-          c.isRedundant &&
-          !failedConnectionIds.has(c.id) &&
-          !failedComponentIds.has(c.fromId) &&
-          !failedComponentIds.has(c.toId)
-      )
+function isConnectionAffected(
+  connection: Connection,
+  { failedComponentIds, failedConnectionIds }: FailedIds
+): boolean {
+  return (
+    failedConnectionIds.has(connection.id) ||
+    failedComponentIds.has(connection.fromId) ||
+    failedComponentIds.has(connection.toId)
+  )
+}
 
-      if (redundantConn) {
-        conn.status = 'degradado'
-      } else {
-        conn.status = 'caido'
-      }
+/** Un enlace afectado queda degradado si hay algún enlace redundante en pie; si no, cae. */
+function applyConnectionStatuses(
+  connections: Connection[],
+  failedIds: FailedIds
+): void {
+  const { failedComponentIds, failedConnectionIds } = failedIds
+
+  connections.forEach((conn) => {
+    if (!isConnectionAffected(conn, failedIds)) {
+      return
+    }
+
+    const redundantConn = connections.find(
+      (c) =>
+        c.id !== conn.id &&
+        c.isRedundant &&
+        !failedConnectionIds.has(c.id) &&
+        !failedComponentIds.has(c.fromId) &&
+        !failedComponentIds.has(c.toId)
+    )
+
+    conn.status = redundantConn ? 'degradado' : 'caido'
+  })
+}
+
+/** Un servicio cae si falla cualquiera de sus dependencias. */
+function applyServiceStatuses(
+  components: InfraComponent[],
+  connections: Connection[],
+  failedComponentIds: Set<string>
+): void {
+  const hasDegradedLinks = () => connections.some((c) => c.status === 'degradado')
+
+  components.forEach((comp) => {
+    if (comp.type !== 'service') {
+      return
+    }
+
+    const deps = comp.dependencies || []
+    const hasFailedDependency = deps.some((depId) => failedComponentIds.has(depId))
+
+    if (hasFailedDependency) {
+      comp.status = 'caido'
+    } else if (hasDegradedLinks()) {
+      comp.status = 'degradado'
     }
   })
+}
 
-  // Un servicio cae si falla cualquiera de sus dependencias
-  componentsAfter.forEach((comp) => {
-    if (comp.type === 'service') {
-      const deps = comp.dependencies || []
-      const failedDeps = deps.filter((depId) => failedComponentIds.has(depId))
+/** Un respaldo sirve si su almacenamiento sigue en pie. */
+function findAccessibleBackup(
+  dataset: Dataset,
+  backups: BackupCopy[],
+  components: InfraComponent[]
+): BackupCopy | undefined {
+  return backups
+    .filter((b) => b.datasetId === dataset.id)
+    .find((bk) => {
+      const storageComp = components.find((c) => c.id === bk.storageComponentId)
+      return storageComp && storageComp.status !== 'caido'
+    })
+}
 
-      if (failedDeps.length > 0) {
-        comp.status = 'caido'
-      } else {
-        const degradedLinks = connectionsAfter.some(
-          (c) => c.status === 'degradado'
-        )
-        if (degradedLinks) {
-          comp.status = 'degradado'
-        }
-      }
-    }
-  })
-
+function summarizeDataRecovery(
+  datasets: Dataset[],
+  backups: BackupCopy[],
+  components: InfraComponent[]
+): DataRecoverySummary {
   const recoveryDetails: RecoveryItem[] = []
   let totalDataGb = 0
   let recoverableDataGb = 0
@@ -105,16 +177,8 @@ export function runDisasterSimulation(
   datasets.forEach((ds) => {
     totalDataGb += ds.sizeGb
 
-    const datasetBackups = backups.filter((b) => b.datasetId === ds.id)
-    // Un respaldo sirve si su almacenamiento sigue en pie
-    const accessibleBackup = datasetBackups.find((bk) => {
-      const storageComp = componentsAfter.find(
-        (c) => c.id === bk.storageComponentId
-      )
-      return storageComp && storageComp.status !== 'caido'
-    })
-
-    const serviceComp = componentsAfter.find((c) => c.id === ds.serviceId)
+    const accessibleBackup = findAccessibleBackup(ds, backups, components)
+    const serviceComp = components.find((c) => c.id === ds.serviceId)
     const isServiceDown = serviceComp?.status === 'caido'
 
     if (accessibleBackup) {
@@ -122,8 +186,9 @@ export function runDisasterSimulation(
       maxRtoMinutes = Math.max(maxRtoMinutes, accessibleBackup.rtoMinutes)
       maxRpoHours = Math.max(maxRpoHours, accessibleBackup.rpoHours)
 
-      // Pérdida estimada: horas de RPO x ~2.5 GB de transacciones por hora
-      const estimatedLoss = Math.round(accessibleBackup.rpoHours * 2.5)
+      const estimatedLoss = Math.round(
+        accessibleBackup.rpoHours * ESTIMATED_GB_LOST_PER_RPO_HOUR
+      )
       totalDataLossGb += estimatedLoss
 
       recoveryDetails.push({
@@ -149,41 +214,66 @@ export function runDisasterSimulation(
     }
   })
 
-  componentsAfter
-    .filter((c) => c.type === 'service')
-    .forEach((svc) => {
-      recoveryDetails.push({
-        name: svc.name,
-        type: 'servicio',
-        statusAfter: svc.status,
-        backupAvailable: svc.status !== 'caido',
-        rtoMinutes: svc.status === 'caido' ? maxRtoMinutes : 0,
-        dataLossGb: 0,
-        observations:
-          svc.status === 'caido'
-            ? 'Servicio interrumpido. Requiere failover y recuperación de datos.'
-            : svc.status === 'degradado'
-            ? 'Servicio operando a través de rutas de contingencia con latencia.'
-            : 'Servicio 100% operativo sin afectación directa.',
-      })
-    })
+  return {
+    recoveryDetails,
+    totalDataGb,
+    recoverableDataGb,
+    totalDataLossGb,
+    maxRtoMinutes,
+    maxRpoHours,
+  }
+}
 
-  // SPOF: servidores y almacenamientos de Lima de los que depende algún servicio
-  const spofList: string[] = []
-  components.forEach((comp) => {
-    if (comp.type === 'server' || comp.type === 'storage') {
-      const dependents = components.filter(
+/** Texto que acompaña a cada servicio en el detalle de recuperación. */
+function describeServiceStatus(status: ComponentStatus): string {
+  switch (status) {
+    case 'caido':
+      return 'Servicio interrumpido. Requiere failover y recuperación de datos.'
+    case 'degradado':
+      return 'Servicio operando a través de rutas de contingencia con latencia.'
+    default:
+      return 'Servicio 100% operativo sin afectación directa.'
+  }
+}
+
+function buildServiceRecoveryItems(
+  components: InfraComponent[],
+  maxRtoMinutes: number
+): RecoveryItem[] {
+  return components
+    .filter((c) => c.type === 'service')
+    .map((svc) => ({
+      name: svc.name,
+      type: 'servicio' as const,
+      statusAfter: svc.status,
+      backupAvailable: svc.status !== 'caido',
+      rtoMinutes: svc.status === 'caido' ? maxRtoMinutes : 0,
+      dataLossGb: 0,
+      observations: describeServiceStatus(svc.status),
+    }))
+}
+
+/** SPOF: servidores y almacenamientos de la región primaria de los que depende algún servicio. */
+function findSinglePointsOfFailure(components: InfraComponent[]): string[] {
+  return components
+    .filter((comp) => comp.type === 'server' || comp.type === 'storage')
+    .filter((comp) => comp.location.includes(PRIMARY_REGION))
+    .filter((comp) =>
+      components.some(
         (c) => c.type === 'service' && c.dependencies?.includes(comp.id)
       )
-      if (dependents.length > 0 && comp.location.includes('Lima')) {
-        spofList.push(`${comp.name} (${comp.location})`)
-      }
-    }
-  })
+    )
+    .map((comp) => `${comp.name} (${comp.location})`)
+}
 
+function detectRiskFindings(
+  { failedComponentIds, failedConnectionIds }: FailedIds,
+  backups: BackupCopy[]
+): RiskFinding[] {
   const findings: RiskFinding[] = []
+  const primaryDatacenterDown = failedComponentIds.has(PRIMARY_DATACENTER_ID)
 
-  if (failedComponentIds.has('dc-lima')) {
+  if (primaryDatacenterDown) {
     findings.push({
       id: 'f-1',
       severity: 'alta',
@@ -194,7 +284,7 @@ export function runDisasterSimulation(
   }
 
   backups.forEach((bk) => {
-    if (bk.location.includes('Lima') && failedComponentIds.has('dc-lima')) {
+    if (bk.location.includes(PRIMARY_REGION) && primaryDatacenterDown) {
       findings.push({
         id: `f-bk-${bk.id}`,
         severity: 'alta',
@@ -204,7 +294,7 @@ export function runDisasterSimulation(
     }
   })
 
-  if (failedConnectionIds.has('conn-inter-fo')) {
+  if (failedConnectionIds.has(INTERCONNECTION_LINK_ID)) {
     findings.push({
       id: 'f-link-1',
       severity: 'media',
@@ -214,47 +304,91 @@ export function runDisasterSimulation(
     })
   }
 
-  const services = componentsAfter.filter((c) => c.type === 'service')
+  return findings
+}
+
+function countServiceStatuses(components: InfraComponent[]): ServiceStatusCounts {
+  const services = components.filter((c) => c.type === 'service')
   const servicesDown = services.filter((s) => s.status === 'caido').length
   const servicesDegraded = services.filter((s) => s.status === 'degradado').length
-  const servicesAvailable = services.length - servicesDown - servicesDegraded
 
+  return {
+    servicesTotal: services.length,
+    servicesDown,
+    servicesDegraded,
+    servicesAvailable: services.length - servicesDown - servicesDegraded,
+  }
+}
+
+function formatSimulationTimestamp(): string {
+  return new Date().toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function runDisasterSimulation(
+  components: InfraComponent[],
+  connections: Connection[],
+  datasets: Dataset[],
+  backups: BackupCopy[],
+  failureEvents: FailureEvent[],
+  scenarioName: string
+): SimulationResult {
+  const componentsAfter = cloneInfrastructure(components)
+  const connectionsAfter = cloneInfrastructure(connections)
+
+  // La propagación es secuencial: los enlaces dependen de los componentes caídos,
+  // y los servicios de los enlaces ya degradados.
+  const failedIds = collectExplicitFailures(failureEvents)
+  propagateDatacenterFailures(componentsAfter, failedIds.failedComponentIds)
+  applyComponentStatuses(componentsAfter, failedIds.failedComponentIds)
+  applyConnectionStatuses(connectionsAfter, failedIds)
+  applyServiceStatuses(componentsAfter, connectionsAfter, failedIds.failedComponentIds)
+
+  const dataRecovery = summarizeDataRecovery(datasets, backups, componentsAfter)
+  const recoveryDetails = [
+    ...dataRecovery.recoveryDetails,
+    ...buildServiceRecoveryItems(componentsAfter, dataRecovery.maxRtoMinutes),
+  ]
+
+  const serviceCounts = countServiceStatuses(componentsAfter)
   const componentsAffected = componentsAfter.filter(
     (c) => c.status === 'caido' || c.status === 'degradado'
   ).length
 
   const dataRecoverablePct =
-    totalDataGb > 0
-      ? Math.round((recoverableDataGb / totalDataGb) * 100)
-      : 100
+    dataRecovery.totalDataGb > 0
+      ? Math.round(
+          (dataRecovery.recoverableDataGb / dataRecovery.totalDataGb) *
+            FULL_RECOVERY_PERCENTAGE
+        )
+      : FULL_RECOVERY_PERCENTAGE
 
   return {
     id: `sim-${Date.now()}`,
     scenarioName,
-    timestamp: new Date().toLocaleString('es-PE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
+    timestamp: formatSimulationTimestamp(),
     eventDescription: failureEvents.map((e) => e.name).join(', '),
     failureEvents,
-    servicesTotal: services.length,
-    servicesAvailable,
-    servicesDegraded,
-    servicesDown,
+    servicesTotal: serviceCounts.servicesTotal,
+    servicesAvailable: serviceCounts.servicesAvailable,
+    servicesDegraded: serviceCounts.servicesDegraded,
+    servicesDown: serviceCounts.servicesDown,
     componentsTotal: componentsAfter.length,
     componentsAffected,
-    dataTotalGb: totalDataGb,
-    dataRecoverableGb: recoverableDataGb,
-    dataLostGb: totalDataLossGb,
+    dataTotalGb: dataRecovery.totalDataGb,
+    dataRecoverableGb: dataRecovery.recoverableDataGb,
+    dataLostGb: dataRecovery.totalDataLossGb,
     dataRecoverablePct,
-    rtoEstimatedMinutes: maxRtoMinutes,
-    rpoEstimatedHours: maxRpoHours,
-    spofIdentified: spofList,
+    rtoEstimatedMinutes: dataRecovery.maxRtoMinutes,
+    rpoEstimatedHours: dataRecovery.maxRpoHours,
+    spofIdentified: findSinglePointsOfFailure(components),
     recoveryDetails,
-    findings,
+    findings: detectRiskFindings(failedIds, backups),
     componentsBefore: components,
     componentsAfter,
     connectionsBefore: connections,

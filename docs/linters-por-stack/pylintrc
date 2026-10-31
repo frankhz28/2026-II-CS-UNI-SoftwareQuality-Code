@@ -1,0 +1,21 @@
+# Python — pylint. Referencia del Módulo 6; no se usa en este repo.
+# En un proyecto Python real este archivo va en la raíz, como `.pylintrc`.
+
+[MESSAGES CONTROL]
+max-line-length=100
+
+[DESIGN]
+max-args=5
+max-branches=12
+# max-branches limita indirectamente la complejidad ciclomática: cada rama
+# (if, for, while, case) suma uno a la métrica de McCabe. Es el equivalente
+# directo de la regla `complexity` de ESLint que usamos en este repo.
+
+# Salida esperada:
+#   $ pylint validador.py
+#   validador.py:12:0: R0912: Too many branches (13/12) (too-many-branches)
+#   Your code has been rated at 8.42/10
+#
+#   $ mypy validador.py
+#   validador.py:5: error: Argument 1 to "es_valida" has incompatible type
+#       "int"; expected "str"

@@ -4,19 +4,12 @@ import React from 'react'
 import {
   Printer,
   ShieldCheck,
-  Building2,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  FileText,
-  Clock,
-  Database,
-  Download,
 } from 'lucide-react'
 import { useSimulation } from '../../context/SimulationContext'
 
 export function ReportView() {
-  const { lastResult, scenarioName, components } = useSimulation()
+  const { lastResult } = useSimulation()
 
   const handlePrint = () => {
     window.print()
