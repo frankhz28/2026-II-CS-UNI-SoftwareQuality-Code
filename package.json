@@ -9,7 +9,7 @@
     "start": "next start",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint --max-warnings 35"
+    "lint": "eslint --max-warnings 0"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",
