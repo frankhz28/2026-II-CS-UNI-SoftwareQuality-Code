@@ -6,14 +6,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Clock,
-  Database,
-  Layers,
-  Printer,
   RotateCcw,
-  Building2,
-  Server,
-  HardDrive,
   FileText,
 } from 'lucide-react'
 import { useSimulation } from '../../context/SimulationContext'
