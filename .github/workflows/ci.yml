@@ -19,16 +19,13 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: 1
       # A nivel de job para poder condicionar el paso de SonarCloud con env.
-      # En un repo sin el secret queda vacío y el paso se salta, en vez de fallar.
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # SonarCloud necesita el historial completo para el blame y para
-          # detectar el "código nuevo". Con el clon shallow por defecto avisa
-          # y las métricas de código nuevo salen mal.
+          # SonarQube Cloud necesita el historial completo para el código nuevo.
           fetch-depth: 0
 
       - name: Configurar pnpm
@@ -54,11 +51,10 @@ jobs:
       - name: Ejecutar pruebas y verificar cobertura
         run: pnpm test:coverage
 
-      - name: Análisis SonarCloud
-        # Se salta solo si el repo no tiene SONAR_TOKEN configurado, para que el
-        # pipeline siga verde donde la app de SonarCloud no está instalada.
+      - name: Análisis SonarQube Cloud
+        # Se salta si el repo no tiene el secret, para no romper el pipeline ahí.
         if: env.SONAR_TOKEN != ''
-        uses: SonarSource/sonarcloud-github-action@v3
+        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
